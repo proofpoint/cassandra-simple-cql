@@ -59,6 +59,86 @@ void onConnected(CassandraClusterConnector connector)
 ```
 CassandraClusterConnector is a wrapper around Datastax driver's Session object and provides standardized interface with Proofpoint's bootstrap, binding, and configuration facilities. You also have opportunity to set consistency levels and idempotency per statement.
 
+#### Integration with Guice and Proofpoint platform
+In the application DAO-specific module, bind DAO class, named cassandra config and connector.
+```
+public class EventBackupModule extends AbstractConfigurationAwareModule
+{
+    @Override
+    public void setup(Binder binder)
+    {
+        binder.requireExplicitBindings();
+        binder.disableCircularProxies();
+        
+        // bind named cassandra config
+        ConfigurationModule.bindConfig(binder)
+                .annotatedWith(Names.named("eventcenter"))
+                .prefixedWith("eventcenter")
+                .to(CassandraProperties.class);
+    
+        // bind the DAO object(s)
+        binder.bind(EventBackupDAO.class).in(Scopes.SINGLETON);
+        //... other DAO classes
+        
+        healthBinder(binder).export(ConfigValuesDao.class).withNameSuffix("cassandra");
+    }
+
+    @Provides
+    @Singleton
+    @Named("configcenter")
+    CassandraClusterConnector provideConfigCenterCassandraDao(@Named("eventcenter") CassandraProperties config)
+    {
+        return new CassandraClusterConnector(config);
+    }
+}
+```
+The DAO class is injected with the connector
+```
+    @Inject
+    public EventBackupDAO(@Named("eventcenter") CassandraClusterConnector connector)
+    {
+        this.connector = connector;
+        connector.addConnectListener(this::onConnected);
+    }
+
+    @AcceptRequests
+    public void init()
+    {
+        connector.initialize();
+    }
+
+    void onConnected(CassandraClusterConnector connector)
+    {
+        int nTables = config.getNumRotationPeriods();
+        InsertEventBackup.Factory.rotations(nTables).autoTruncate()
+                .expirationMs(config.getExpirationPeriod().toMillis())
+                .rotationMs(config.getRotationPeriod().toMillis()).prepare(connector);
+        ...
+    }
+    
+    public CompletableFuture<Boolean> storeEventBackup(String ec_id, String topic, short partition, byte[] event_body, TimeUUID id)
+    {
+        return InsertEventBackup.Factory.get().ec_id(ec_id).topic(topic).partition(partition).event_body(event_body).id(id)
+                .executeAsync()
+                .thenApply(ResultSet::wasApplied);
+    }
+```
+Using the DAO in the application:
+```
+    @Inject
+    public ECProducerCassandraBackup(EventBackupDAO dao)
+    {
+        this.dao = dao;
+    }
+
+    public void storeBackup(String clusterID, String topic, short partition, byte[] payload)
+    {
+        this.partition = (short) partition;
+
+        TimeUUID cassandraID = TimeUUID.now();
+        storeEventFutures.add(dao.storeEventBackup(clusterID, topic, (short) partition, payload, cassandraID));
+    }
+```
 ### Updates
 Since the update has IF NOT EXIST clause, we want to know whether the update was applied. In this case we can transform the resulting future into boolean via ResultSet::wasApplied.
 ```
