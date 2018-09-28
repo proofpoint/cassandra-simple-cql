@@ -1,9 +1,9 @@
 # Cassandra SimpleCQLMapper
+The SimpleCQLMapper is a syntactic sugar on top of Datastax Cassandra driver.
+The SimpleCQLMapper facilitates writing your code around CQL queries (and not around tables, like ORM mapping would) and it does not hide CQL from you. Another significant feature: it hides complexities of querying rotated tables, if you use them.
 ## Basic Usage
 ### Datamodel
-Consider this simple data model:
-
-### Define the queries
+Consider the following simple data model:
 ```
 CREATE TABLE IF NOT EXIST CONTENT_BY_SHA {
     sha256  blob,
@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXIST CONTENT_BY_SHA {
     PRIMARY KEY (sha256);
 };
 ```
+### DAO class
+DAO class has 3 sections:
+* defining your queries, where each query is represented by interface you define.
+* initialization section, where queries are prepared during startup
+* data access methods, where you make use of the quesries
+#### Define the query interfaces
 Define your conditional-update query:
 ```
 public interface UpdateContent extends SimpleCqlMapper<UpdateContent>
@@ -48,7 +54,8 @@ public interface SelectContent extends SimpleCqlMapper<SelectContent>
 ```
 Note how the getter names correspond to the select column names.
 
-### Prepare once upon initialization
+#### Prepare once upon initialization
+
 ```
 void onConnected(CassandraClusterConnector connector)
 {
@@ -57,8 +64,90 @@ void onConnected(CassandraClusterConnector connector)
     SelectContent.Factory.prepare(connector);
 }
 ```
-CassandraClusterConnector is a wrapper around Datastax driver's Session object and provides standardized interface with Proofpoint's bootstrap, binding, and configuration facilities. You also have opportunity to set consistency levels and idempotency per statement.
+CassandraClusterConnector is a wrapper around Datastax driver's Session object.
 
+See more on initialization and integration with Guice and PP Platform below.
+
+#### Data access methods
+##### Updates
+Since the update has IF NOT EXIST clause, we want to know whether the update was applied. In this case we can transform the resulting future into boolean via ResultSet::wasApplied.
+```
+public CompletableFuture<Boolean> updateContent(byte[] sha256, String content, String customer)
+{
+    return UpdateContent.Factory.get()
+        .sha256(sha256)
+        .content(content)
+        .customer(customer)
+        .executeAsync()
+        .thenApply(ResultSet::wasApplied);
+}
+```
+##### Selects
+By default the resulting future will be SelectContent typed but we rather care only about content in this call, so we map the result to a String.
+```
+public CompletableFuture<Optional<String>> selectContent(byte[] sha256)
+{
+    return SelectContent.Factory.get()
+        .sha256(sha256)
+        .executeAsyncAndMapOne()
+        .thenApply(optionalRow -> optionalRow.map(SelectContent::content));
+}
+```
+What if we want to return multiple fields but don't want to expose SelectContent interface to the caller? In this case we should define the query as follows:
+
+```
+public interface ContentWithCustomer
+{
+    String content();
+    String customer();
+}
+
+public interface SelectContent extends SimpleCqlMapper<ContentWithCustomer>
+{
+    SimpleCqlFactory<SelectContent> Factory = SimpleCqlFactory.factory(SelectContent.class, "SELECT content,customer FROM CONTENT_BY_SHA WHERE sha256=?");
+    SelectContent sha256(byte[] sha256);
+}
+```
+Note how the SimpleCqlMapper is now parameterized by ContentWithCustomer. And the query method now looks like:
+```
+public CompletableFuture<Optional<ContentWithCustomer>> selectContentWithCustomer(byte[] sha256)
+{
+    return SelectContent.Factory.get().sha256(sha256).executeAsyncAndMapOne();
+}
+```
+##### Selects that return collections
+Let's use a table with some clustering columns. Imagine that we store content by hash-customer pair, where sha256 is still the partition key and customer becomes a clustering column.
+```
+CREATE TABLE IF NOT EXIST CONTENT_BY_SHA {
+    sha256  blob,
+    content text,
+    customer text,
+    PRIMARY KEY (sha256, customer);
+};
+```
+Now the select query can be defined identically as we saw above.
+
+But our query method would look different, we now use executeAsyncAndMap instead of executeAsyncAndMapOne.
+```
+public CompletableFuture<Collection<ContentWithCustomer>> selectContentWithCustomer(byte[] sha256)
+{
+    return SelectContent.Factory.get().sha256(sha256).executeAsyncAndMap();
+}
+```
+##### Selects that return single value
+Suppose you want to return a single aggregate value, or a static column from your query method. Use the Optional::map method to re-map the result.
+```
+public interface SelectCount extends SimpleCqlMapper<SelectCount>
+{
+    SimpleCqlFactory<SelectCount> Factory = SimpleCqlFactory.factory(SelectCount.class, "SELECT count(*) as contentCount FROM CONTENT_BY_SHA LIMIT 100000");
+    int contentCount();
+}
+  
+public CompletableFuture<Optional<Integer>> countOfContent()
+{
+    return SelectContent.Factory.get().sha256(sha256).executeAsyncAndMapOne().thenApply(optionalResult -> optionalResult.map(SelectCount::theCount));
+}
+```
 #### Integration with Guice and Proofpoint platform
 In the application DAO-specific module, bind DAO class, named cassandra config and connector.
 ```
@@ -138,85 +227,6 @@ Using the DAO in the application:
         TimeUUID cassandraID = TimeUUID.now();
         storeEventFutures.add(dao.storeEventBackup(clusterID, topic, (short) partition, payload, cassandraID));
     }
-```
-### Updates
-Since the update has IF NOT EXIST clause, we want to know whether the update was applied. In this case we can transform the resulting future into boolean via ResultSet::wasApplied.
-```
-public CompletableFuture<Boolean> updateContent(byte[] sha256, String content, String customer)
-{
-    return UpdateContent.Factory.get()
-        .sha256(sha256)
-        .content(content)
-        .customer(customer)
-        .executeAsync()
-        .thenApply(ResultSet::wasApplied);
-}
-```
-### Selects
-By default the resulting future will be SelectContent typed but we rather care only about content in this call, so we map the result to a String.
-```
-public CompletableFuture<Optional<String>> selectContent(byte[] sha256)
-{
-    return SelectContent.Factory.get()
-        .sha256(sha256)
-        .executeAsyncAndMapOne()
-        .thenApply(optionalRow -> optionalRow.map(SelectContent::content));
-}
-```
-What if we want to return multiple fields but don't want to expose SelectContent interface to the caller? In this case we should define the query as follows:
-
-```
-public interface ContentWithCustomer
-{
-    String content();
-    String customer();
-}
-
-public interface SelectContent extends SimpleCqlMapper<ContentWithCustomer>
-{
-    SimpleCqlFactory<SelectContent> Factory = SimpleCqlFactory.factory(SelectContent.class, "SELECT content,customer FROM CONTENT_BY_SHA WHERE sha256=?");
-    SelectContent sha256(byte[] sha256);
-}
-```
-Note how the SimpleCqlMapper is now parameterized by ContentWithCustomer. And the query method now looks like:
-```
-public CompletableFuture<Optional<ContentWithCustomer>> selectContentWithCustomer(byte[] sha256)
-{
-    return SelectContent.Factory.get().sha256(sha256).executeAsyncAndMapOne();
-}
-```
-### Selects that return collections
-Let's use a table with some clustering columns. Imagine that we store content by hash-customer pair, where sha256 is still the partition key and customer becomes a clustering column.
-```
-CREATE TABLE IF NOT EXIST CONTENT_BY_SHA {
-    sha256  blob,
-    content text,
-    customer text,
-    PRIMARY KEY (sha256, customer);
-};
-```
-Now the select query can be defined identically as we saw above.
-
-But our query method would look different, we now use executeAsyncAndMap instead of executeAsyncAndMapOne.
-```
-public CompletableFuture<Collection<ContentWithCustomer>> selectContentWithCustomer(byte[] sha256)
-{
-    return SelectContent.Factory.get().sha256(sha256).executeAsyncAndMap();
-}
-```
-### Selects that return single value
-Suppose you want to return a single aggregate value, or a static column from your query method. Use the Optional::map method to re-map the result.
-```
-public interface SelectCount extends SimpleCqlMapper<SelectCount>
-{
-    SimpleCqlFactory<SelectCount> Factory = SimpleCqlFactory.factory(SelectCount.class, "SELECT count(*) as contentCount FROM CONTENT_BY_SHA LIMIT 100000");
-    int contentCount();
-}
-  
-public CompletableFuture<Optional<Integer>> countOfContent()
-{
-    return SelectContent.Factory.get().sha256(sha256).executeAsyncAndMapOne().thenApply(optionalResult -> optionalResult.map(SelectCount::theCount));
-}
 ```
 ## Table rotation
 Now imagine that our content constantly expires. But because content column is huge, we don't want to use compaction (which causes write amplification). Instead, we want to use a set of round-buffer tables and truncate when table goes out of scope.
