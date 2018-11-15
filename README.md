@@ -1,9 +1,9 @@
-#Cassandra SimpleCQLMapper
+# Cassandra SimpleCQLMapper
+The SimpleCQLMapper is a syntactic sugar on top of Datastax Cassandra driver.
+The SimpleCQLMapper facilitates writing your code around CQL queries (and not around tables, like ORM mapping would) and it does not hide CQL from you. Another significant feature: it hides complexities of querying rotated tables, if you use them.
 ## Basic Usage
-###Datamodel
-Consider this simple data model:
-
-###Define the queries
+### Datamodel
+Consider the following simple data model:
 ```
 CREATE TABLE IF NOT EXIST CONTENT_BY_SHA {
     sha256  blob,
@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXIST CONTENT_BY_SHA {
     PRIMARY KEY (sha256);
 };
 ```
+### DAO class
+DAO class has 3 sections:
+* defining your queries, where each query is represented by interface you define.
+* initialization section, where queries are prepared during startup
+* data access methods, where you make use of the quesries
+#### Define the query interfaces
 Define your conditional-update query:
 ```
 public interface UpdateContent extends SimpleCqlMapper<UpdateContent>
@@ -48,7 +54,8 @@ public interface SelectContent extends SimpleCqlMapper<SelectContent>
 ```
 Note how the getter names correspond to the select column names.
 
-###Prepare once upon initialization
+#### Prepare once upon initialization
+
 ```
 void onConnected(CassandraClusterConnector connector)
 {
@@ -57,9 +64,12 @@ void onConnected(CassandraClusterConnector connector)
     SelectContent.Factory.prepare(connector);
 }
 ```
-CassandraClusterConnector is a wrapper around Datastax driver's Session object and provides standardized interface with Proofpoint's bootstrap, binding, and configuration facilities. You also have opportunity to set consistency levels and idempotency per statement.
+CassandraClusterConnector is a wrapper around Datastax driver's Session object.
 
-###Updates
+See more on initialization and integration with Guice and PP Platform below.
+
+#### Data access methods
+##### Updates
 Since the update has IF NOT EXIST clause, we want to know whether the update was applied. In this case we can transform the resulting future into boolean via ResultSet::wasApplied.
 ```
 public CompletableFuture<Boolean> updateContent(byte[] sha256, String content, String customer)
@@ -72,7 +82,7 @@ public CompletableFuture<Boolean> updateContent(byte[] sha256, String content, S
         .thenApply(ResultSet::wasApplied);
 }
 ```
-###Selects
+##### Selects
 By default the resulting future will be SelectContent typed but we rather care only about content in this call, so we map the result to a String.
 ```
 public CompletableFuture<Optional<String>> selectContent(byte[] sha256)
@@ -105,7 +115,7 @@ public CompletableFuture<Optional<ContentWithCustomer>> selectContentWithCustome
     return SelectContent.Factory.get().sha256(sha256).executeAsyncAndMapOne();
 }
 ```
-###Selects that return collections
+##### Selects that return collections
 Let's use a table with some clustering columns. Imagine that we store content by hash-customer pair, where sha256 is still the partition key and customer becomes a clustering column.
 ```
 CREATE TABLE IF NOT EXIST CONTENT_BY_SHA {
@@ -124,7 +134,7 @@ public CompletableFuture<Collection<ContentWithCustomer>> selectContentWithCusto
     return SelectContent.Factory.get().sha256(sha256).executeAsyncAndMap();
 }
 ```
-###Selects that return single value
+##### Selects that return single value
 Suppose you want to return a single aggregate value, or a static column from your query method. Use the Optional::map method to re-map the result.
 ```
 public interface SelectCount extends SimpleCqlMapper<SelectCount>
@@ -138,11 +148,91 @@ public CompletableFuture<Optional<Integer>> countOfContent()
     return SelectContent.Factory.get().sha256(sha256).executeAsyncAndMapOne().thenApply(optionalResult -> optionalResult.map(SelectCount::theCount));
 }
 ```
-##Table rotation
+#### Integration with Guice and Proofpoint platform
+In the application DAO-specific module, bind DAO class, named cassandra config and connector.
+```
+public class EventBackupModule extends AbstractConfigurationAwareModule
+{
+    @Override
+    public void setup(Binder binder)
+    {
+        binder.requireExplicitBindings();
+        binder.disableCircularProxies();
+        
+        // bind named cassandra config
+        ConfigurationModule.bindConfig(binder)
+                .annotatedWith(Names.named("eventcenter"))
+                .prefixedWith("eventcenter")
+                .to(CassandraProperties.class);
+    
+        // bind the DAO object(s)
+        binder.bind(EventBackupDAO.class).in(Scopes.SINGLETON);
+        //... other DAO classes
+        
+        healthBinder(binder).export(ConfigValuesDao.class).withNameSuffix("cassandra");
+    }
+
+    @Provides
+    @Singleton
+    @Named("configcenter")
+    CassandraClusterConnector provideConfigCenterCassandraDao(@Named("eventcenter") CassandraProperties config)
+    {
+        return new CassandraClusterConnector(config);
+    }
+}
+```
+The DAO class is injected with the connector
+```
+    @Inject
+    public EventBackupDAO(@Named("eventcenter") CassandraClusterConnector connector)
+    {
+        this.connector = connector;
+        connector.addConnectListener(this::onConnected);
+    }
+
+    @AcceptRequests
+    public void init()
+    {
+        connector.initialize();
+    }
+
+    void onConnected(CassandraClusterConnector connector)
+    {
+        int nTables = config.getNumRotationPeriods();
+        InsertEventBackup.Factory.rotations(nTables).autoTruncate()
+                .expirationMs(config.getExpirationPeriod().toMillis())
+                .rotationMs(config.getRotationPeriod().toMillis()).prepare(connector);
+        ...
+    }
+    
+    public CompletableFuture<Boolean> storeEventBackup(String ec_id, String topic, short partition, byte[] event_body, TimeUUID id)
+    {
+        return InsertEventBackup.Factory.get().ec_id(ec_id).topic(topic).partition(partition).event_body(event_body).id(id)
+                .executeAsync()
+                .thenApply(ResultSet::wasApplied);
+    }
+```
+Using the DAO in the application:
+```
+    @Inject
+    public ECProducerCassandraBackup(EventBackupDAO dao)
+    {
+        this.dao = dao;
+    }
+
+    public void storeBackup(String clusterID, String topic, short partition, byte[] payload)
+    {
+        this.partition = (short) partition;
+
+        TimeUUID cassandraID = TimeUUID.now();
+        storeEventFutures.add(dao.storeEventBackup(clusterID, topic, (short) partition, payload, cassandraID));
+    }
+```
+## Table rotation
 Now imagine that our content constantly expires. But because content column is huge, we don't want to use compaction (which causes write amplification). Instead, we want to use a set of round-buffer tables and truncate when table goes out of scope.
 SimpleCQLMapper library can be useful in abstracting out the table rotation complexities. But first, let's identify the problem.
 
-###Rolling data - TWCS or bust? No.
+### Rolling data - TWCS or bust? No.
 FACT: Cassandra is not designed for time-series data, queues, and queue-like datasets (see https://www.datastax.com/dev/blog/cassandra-anti-patterns-queues-and-queue-like-datasets). nCassandra is a log-structured merge tree (LSM) and data is never modified in-place. Column delete or expiration is written as soft-delete and executed later via compaction process.
 
 TWCS is perfect if your data has fixed expiration window (columns and/or TTL never updated) and you don't need Cassandra counters and your content is not huge. Otherwise, the only other solution is table rotation.
@@ -164,7 +254,7 @@ Cassandra assumes no in-place data modification, postponing the update resolutio
 | Data is mutable and mutations spread over time |	maybe	 |  | 	yes	 | use table rotation strategy for expiration
 | Counters are used  |	can not	  |  |	yes	 |use table rotation strategy for expiration
 | Data (blobs) is huge |	should not	 | 	 | yes |	try to avoid compaction (to avoid write amplification)
-###Using rotation tables and TRUNCATE
+### Using rotation tables and TRUNCATE
 Define tables as follows:
 ```
 CREATE TABLE_0 { ... }
@@ -184,7 +274,7 @@ You can use automatic truncation or schedule a thread to manually truncate older
 ```
 session.execute("TRUNCATE TABLE_"+getFutureTableRotationID());
 ```
-###Define the query
+### Define the query
 Define your insert query:
 ```
 public interface InsertContent extends SimpleCqlMapper<InsertContent>
@@ -203,7 +293,7 @@ public interface SelectContent extends SimpleCqlMapper<SelectContent>
     String content();
 }
 ```
-###Prepare once upon initialization
+### Prepare once upon initialization
 ```
 void onConnected(CassandraClusterConnector connector)
 {
@@ -222,7 +312,7 @@ void onConnected(CassandraClusterConnector connector)
         .prepare(connector);
 }
 ```
-###Updates
+### Updates
 Update is simple, it always goes to the current table.
 ```
 public CompletableFuture<Boolean> insertContent(byte[] sha256, String content)
@@ -234,7 +324,7 @@ public CompletableFuture<Boolean> insertContent(byte[] sha256, String content)
         .thenApply(ResultSet::wasApplied);
 }
 ```
-###Selects
+### Selects
 Selects are more tricky because we need to optimize how we query Cassandra to minimize load and speed up the reads. There are several criteria that SimpleCqlMapper employs, query in parallel or in-sequence and how many tables to query. All this logic is transparent to the calling code. 
 ```
 public CompletableFuture<Optional<SelectContent>> selectContent(byte[] sha256)
@@ -244,13 +334,13 @@ public CompletableFuture<Optional<SelectContent>> selectContent(byte[] sha256)
         .executeAsyncAndMapOne();
 }
 ```
-###Using specific table to insert or query
+### Using specific table to insert or query
 Use `SelectContent.Factory.tid(tid).get()` or `InsertContent.Factory.tid(tid).get()` to query or insert into a specific table.
 
-###Query multiple tables
+### Query multiple tables
 Use `SelectContent.Factory.faster(nTables).get()` to query multiple tables in parallel - for collections, or use `SelectContent.Factory.orderly(nTables).get()` to query in sequence and return once a result found.
 
-###List of query options
+### List of query options
 If you don't specify any query options then SimpleCqlMapper picks the most optimal option. But programmer can set specific option:
 
 | Query options | Description |
@@ -265,7 +355,7 @@ Factory.any().get()	| sequentially try both current and previous rotation tables
 Factory.all().get()	| query all tables in parallel (collection) or sequentially (one item).
 Factory.last().get() |	sequentially try both current and previous rotation tables and return all (collection) or last found (one item).
 default, Factory.get() |	most optimal strategy will be picked.
-###Automatic truncation
+### Automatic truncation
 The SimpleCqlMapper will automatically truncate next current table half-period in advance. To enable that, use autoTruncate option, like so:
 ```
 void onConnected(CassandraClusterConnector connector)
@@ -280,10 +370,10 @@ void onConnected(CassandraClusterConnector connector)
             .rotationMs(rotationPeriod)
             .prepare(connector);
 ```
-###Managing Cassandra timestamp skew
+### Managing Cassandra timestamp skew
 Truncation depends on strict synchronization of client side vs Cassandra side timestamps. The SimpleCqlMapper will automatically calculate clock skew between local system and remote Cassandra - during initialization. During queries some time padding is used to make sure the previous period table is still queried within plus-minus padding period.
 
-###References
+### References
 * http://thelastpickle.com/blog/2016/12/08/TWCS-part1.html
 * https://docs.datastax.com/en/cassandra/3.0/cassandra/dml/dmlHowDataMaintain.html
 * https://docs.datastax.com/en/cassandra/3.0/cassandra/operations/opsConfigureCompaction.html
