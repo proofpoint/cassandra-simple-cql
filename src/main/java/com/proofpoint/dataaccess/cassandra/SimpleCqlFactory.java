@@ -240,6 +240,12 @@ public final class SimpleCqlFactory<T extends SimpleCqlMapper> implements Simple
         return (byteBuffer == null) ? null : byteBuffer.array();
     }
 
+    static Optional<?> getOptional(Row row, String name)
+    {
+        Object obj = row.getObject(name);
+        return (obj == null)? Optional.empty() : Optional.of(obj);
+    }
+
     ByNameAccessor getByNameAccessor(Method m)
     {
         Class<?> returnType = m.getReturnType();
@@ -248,6 +254,9 @@ public final class SimpleCqlFactory<T extends SimpleCqlMapper> implements Simple
         }
         if (byte[].class.isAssignableFrom(returnType)) {
             return SimpleCqlFactory::getByteArray;
+        }
+        if (Optional.class.isAssignableFrom(returnType)) {
+            return SimpleCqlFactory::getOptional;
         }
         return Row::getObject;
     }
