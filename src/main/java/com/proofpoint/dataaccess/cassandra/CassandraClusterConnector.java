@@ -151,6 +151,13 @@ public class CassandraClusterConnector
         this.name = (name == null) ? config.getName() : name;
     }
 
+    public CassandraClusterConnector(String name, Session session)
+    {
+        this.session.complete(requireNonNull(session, "session is null"));
+        this.name = name;
+        this.config = new CassandraProperties();
+    }
+
     public static String getNameFromCallerAnnotation()
     {
         StackTraceElement[] stElements = Thread.currentThread().getStackTrace();
