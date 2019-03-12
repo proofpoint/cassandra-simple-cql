@@ -1,6 +1,61 @@
 # Cassandra SimpleCQLMapper
 The SimpleCQLMapper is a syntactic sugar on top of Datastax Cassandra driver.
 The SimpleCQLMapper facilitates writing your code around CQL queries (and not around tables, like ORM mapping would) and it does not hide CQL from you. Another significant feature: it hides complexities of querying rotated tables, if you use them.
+## Configuring and binding (Guice)
+### Binding artifacts
+* MyModule.java, Guice module that ties together configuration pieces
+* MyDao.java, The DAO where you put your Simple CQL code
+* configuration -	configuration settings that go to either config.properties or application defaults. Use prefix "my_prefix" for config settings.
+* CassandraProperties.class, the class that implements prefixed config. this class comes from simplecql library.
+* CassandraClusterConnector.class, the class that manages the Cassandra Session per cluster. This class comes from simplecql library.
+### MyModule
+Module ties together configuration and SimpleCQL artifacts. String constant "my_cluster" is the cluster name. Thereby multiple named Cassandra connections are allowed and possible.
+```
+public class MyModule implements Module
+{
+    @Override
+    public void configure(Binder binder)
+    {
+        // note, if you are using Proofpoint platform, then use:
+        //configBinder(binder).annotatedWith(Names.named("my_cluster")).prefixedWith("my_cluster").to(CassandraProperties.class);
+        binder.bind(CassandraProperties.class).annotatedWith(Names.named("configcenter")).in(Scopes.SINGLETON);
+        binder.bind(MyDAO.class).in(Scopes.SINGLETON);
+    }
+ 
+    @Provides
+    @Singleton
+    @Named("my_cluster")
+    CassandraClusterConnector provideConfigCenterCassandraDao(@Named("my_cluster") CassandraProperties config)
+    {
+        return new CassandraClusterConnector(config);
+    }
+}
+```
+### MyDAO class
+```
+public interface SelectMyContent extends ActivationsPrimaryKey<SelectMyContent>, SimpleCqlMapper<SelectMyContent>
+{
+    SimpleCqlFactory<SelectMyContent> Factory = SimpleCqlFactory.factory(SelectMyContent.class,
+            "SELECT * from  my_keyspace.LABELS WHERE name=? and tenant=? and label=?")
+            .setIdempotent(true)
+            .setConsistencyLevel(ConsistencyLevel.QUORUM);
+}
+ 
+// ... other statements
+ 
+@Inject
+public MyDao(@Named("my_cluster") CassandraClusterConnector connector)
+{
+    this.connector = connector;
+    connector.addConnectListener(this::onConnected);
+}
+ 
+void onConnected(CassandraClusterConnector connector)
+{
+    SelectMyContent.Factory.prepare(connector);
+    // ... other statements
+}
+```
 ## Basic Usage
 ### Datamodel
 Consider the following simple data model:
