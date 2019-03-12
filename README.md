@@ -59,13 +59,13 @@ void onConnected(CassandraClusterConnector connector)
 }
 ```
 ### Configuration
-The properties can be loaded from external file into CassandraProperties, for example via the Proofpoint platform Configuration mschinery. 
+The properties can be loaded from external file into CassandraProperties, for example via the Proofpoint platform Configuration machinery. 
 | Property | Description |
-| --- | :---: | 
-cassandra-hosts | comma-separated list of host for you cassandra endpoints
-cassandra-username | username
-cassandra-password	| password for the username
-cassandra-use-ssl |	if true, use SSL
+| --- | --- | 
+| cassandra-hosts | comma-separated list of host for you cassandra endpoints
+| cassandra-username | username
+| cassandra-password	| password for the username
+| cassandra-use-ssl |	if true, use SSL
 
 ## Basic Usage
 ### Datamodel
