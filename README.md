@@ -1,6 +1,8 @@
 # Cassandra SimpleCQLMapper
-The SimpleCQLMapper is a syntactic sugar on top of Datastax Cassandra driver.
-The SimpleCQLMapper facilitates writing your code around CQL queries (and not around tables, like ORM mapping would) and it does not hide CQL from you. Another significant feature: it hides complexities of querying rotated tables, if you use them.
+The SimpleCQLMapper is an abstraction layer on top of Datastax Cassandra driver.
+Many 3rd party ORM mappings are centered around tables. SimpleCQLMapper recognizes that Cassandra data modeling is built around queries, not tables.
+The SimpleCQLMapper consolidates everything related to a particular query in single interface, and converts binding and result mapping into a type-safe access. It does not hide CQL from you like Datastax' query builder, if you are dealing with Cassandra you must know CQL, period.
+Another significant feature of SimpleCQLMapper: it hides complexities of querying rotated tables, if you use them.
 ## Configuring and binding (Guice)
 ### Binding artifacts
 * MyModule.java, Guice module that ties together configuration pieces
@@ -56,6 +58,15 @@ void onConnected(CassandraClusterConnector connector)
     // ... other statements
 }
 ```
+### Configuration
+The properties can be loaded from external file into CassandraProperties, for example via the Proofpoint platform Configuration mschinery. 
+| Property | Description |
+| --- | :---: | 
+cassandra-hosts | comma-separated list of host for you cassandra endpoints
+cassandra-username | username
+cassandra-password	| password for the username
+cassandra-use-ssl |	if true, use SSL
+
 ## Basic Usage
 ### Datamodel
 Consider the following simple data model:
@@ -203,71 +214,8 @@ public CompletableFuture<Optional<Integer>> countOfContent()
     return SelectContent.Factory.get().sha256(sha256).executeAsyncAndMapOne().thenApply(optionalResult -> optionalResult.map(SelectCount::theCount));
 }
 ```
-#### Integration with Guice and Proofpoint platform
-In the application DAO-specific module, bind DAO class, named cassandra config and connector.
-```
-public class EventBackupModule extends AbstractConfigurationAwareModule
-{
-    @Override
-    public void setup(Binder binder)
-    {
-        binder.requireExplicitBindings();
-        binder.disableCircularProxies();
-        
-        // bind named cassandra config
-        ConfigurationModule.bindConfig(binder)
-                .annotatedWith(Names.named("eventcenter"))
-                .prefixedWith("eventcenter")
-                .to(CassandraProperties.class);
-    
-        // bind the DAO object(s)
-        binder.bind(EventBackupDAO.class).in(Scopes.SINGLETON);
-        //... other DAO classes
-        
-        healthBinder(binder).export(ConfigValuesDao.class).withNameSuffix("cassandra");
-    }
 
-    @Provides
-    @Singleton
-    @Named("configcenter")
-    CassandraClusterConnector provideConfigCenterCassandraDao(@Named("eventcenter") CassandraProperties config)
-    {
-        return new CassandraClusterConnector(config);
-    }
-}
-```
-The DAO class is injected with the connector
-```
-    @Inject
-    public EventBackupDAO(@Named("eventcenter") CassandraClusterConnector connector)
-    {
-        this.connector = connector;
-        connector.addConnectListener(this::onConnected);
-    }
-
-    @AcceptRequests
-    public void init()
-    {
-        connector.initialize();
-    }
-
-    void onConnected(CassandraClusterConnector connector)
-    {
-        int nTables = config.getNumRotationPeriods();
-        InsertEventBackup.Factory.rotations(nTables).autoTruncate()
-                .expirationMs(config.getExpirationPeriod().toMillis())
-                .rotationMs(config.getRotationPeriod().toMillis()).prepare(connector);
-        ...
-    }
-    
-    public CompletableFuture<Boolean> storeEventBackup(String ec_id, String topic, short partition, byte[] event_body, TimeUUID id)
-    {
-        return InsertEventBackup.Factory.get().ec_id(ec_id).topic(topic).partition(partition).event_body(event_body).id(id)
-                .executeAsync()
-                .thenApply(ResultSet::wasApplied);
-    }
-```
-Using the DAO in the application:
+#### Using the DAO in the application:
 ```
     @Inject
     public ECProducerCassandraBackup(EventBackupDAO dao)
