@@ -296,11 +296,17 @@ public class CassandraClusterConnector
     public void addConnectListener(Consumer<CassandraClusterConnector> consumer)
     {
         preparers.add(consumer);
+        if (session.isDone()) {
+            consumer.accept(this);
+        }
     }
 
     public void addBuildListener(Consumer<Cluster> consumer)
     {
         clusterConfigurers.add(consumer);
+        if (session.isDone()) {
+            consumer.accept(this.session.join().getCluster());
+        }
     }
 
     private boolean connect()
