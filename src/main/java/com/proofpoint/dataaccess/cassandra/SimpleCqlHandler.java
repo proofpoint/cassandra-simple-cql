@@ -74,7 +74,7 @@ final class SimpleCqlHandler<T extends SimpleCqlMapper> implements InvocationHan
         executeMethods.put("bind0", SimpleCqlHandler::bind0);
         executeMethods.put("query", SimpleCqlHandler::query);
         executeMethods.put("executeAsync", SimpleCqlHandler::executeAsync);
-        executeMethods.put("executeAsyncAndMap", SimpleCqlHandler::executeAsyncAndMap);
+        executeMethods.put("executeAsyncAndMapToList", SimpleCqlHandler::executeAsyncAndMapToList);
         executeMethods.put("executeAsyncAndMapOne", SimpleCqlHandler::executeAsyncAndMapOne);
         executeMethods.put("executeAsyncAndMapAtMostOne", SimpleCqlHandler::executeAsyncAndMapAtMostOne);
 
@@ -136,7 +136,7 @@ final class SimpleCqlHandler<T extends SimpleCqlMapper> implements InvocationHan
                     .bindTo(proxy)
                     .invokeWithArguments(args);
         }
-        throw new RuntimeException(String.format("SimpleCqlMapper %s cannot invoke method %s(%d .. args)", mapper.getMapperName(), m.toString(), args.length));
+        throw new RuntimeException(String.format("SimpleCqlMapper %s cannot invoke method %s(with %d args)", mapper.getMapperName(), m.toString(), (args == null)? 0 : args.length));
     }
 
     public ResultSet execute()
@@ -186,7 +186,7 @@ final class SimpleCqlHandler<T extends SimpleCqlMapper> implements InvocationHan
         return tidRange;
     }
 
-    public CompletableFuture<Collection<T>> executeAsyncAndMap()
+    public CompletableFuture<List<T>> executeAsyncAndMapToList()
     {
         Session session = mapper.connector.getSessionWithTimeout();
         if (mapper.getNumRotations() == 1) {

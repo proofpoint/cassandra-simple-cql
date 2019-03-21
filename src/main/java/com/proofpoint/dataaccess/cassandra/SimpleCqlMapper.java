@@ -1,12 +1,10 @@
 package com.proofpoint.dataaccess.cassandra;
 
-import com.datastax.driver.core.BatchStatement;
-import com.datastax.driver.core.BoundStatement;
 import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.Session;
 import com.google.common.reflect.TypeToken;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -35,16 +33,28 @@ public interface SimpleCqlMapper<T>
         return executeAsyncAndMapToColumn(columnMapper, Collectors.toSet());
     }
 
+    default <R> CompletableFuture<List<R>> executeAsyncAndMapToColumnList(Function<T,R> columnMapper)
+    {
+        return executeAsyncAndMapToColumn(columnMapper, Collectors.toList());
+    }
+
+
     default <R, C extends Collection<R>> CompletableFuture<C> executeAsyncAndMapToColumn(Function<T,R> columnMapper, Collector<R, ?, C> collector)
     {
-        return executeAsyncAndMap().thenApply(coll -> coll.stream().map(columnMapper).collect(collector));
+        return executeAsyncAndMapToList().thenApply(coll -> coll.stream().map(columnMapper).collect(collector));
     }
 
     default <R> CompletableFuture<Optional<R>> executeAsyncAndMapOneOptionalColumn(Function<T,R> columnMapper) {
         return executeAsyncAndMapAtMostOne().thenApply(opt-> opt.map(columnMapper));
     }
 
-    CompletableFuture<Collection<T>> executeAsyncAndMap();
+    CompletableFuture<List<T>> executeAsyncAndMapToList();
+
+    @SuppressWarnings("unchecked")
+    default CompletableFuture<Collection<T>> executeAsyncAndMap()
+    {
+        return (CompletableFuture<Collection<T>>)(CompletableFuture<?>)executeAsyncAndMapToList();
+    }
 
     CompletableFuture<Optional<T>> executeAsyncAndMapOne();
 

@@ -771,7 +771,7 @@ public final class SimpleCqlFactory<T extends SimpleCqlMapper> implements Simple
         return (row == null) ? Optional.empty() : Optional.of((M) map(row));
     }
 
-    public <M> Collection<M> mapCollection(ResultSet rs)
+    public <M> List<M> mapCollection(ResultSet rs)
     {
         // TODO: experiment with this code for more optimal async execution
         // below, must use async continuation because there could be blocking I/O calls during iteration
@@ -790,7 +790,7 @@ public final class SimpleCqlFactory<T extends SimpleCqlMapper> implements Simple
 //            return result;
 //        }, executor);
 
-        Collection<M> result = new ArrayList<>();
+        List<M> result = new ArrayList<>();
         // NOTE that this lambda function may issue blocking calls when fetch page is exhausted
         for (Row row : rs) {
             result.add((M) map(row));
