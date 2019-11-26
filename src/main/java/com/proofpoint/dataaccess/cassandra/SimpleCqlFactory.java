@@ -798,6 +798,16 @@ public final class SimpleCqlFactory<T extends SimpleCqlMapper> implements Simple
         return result;
     }
 
+    void acquireRequestPermit()
+    {
+        connector.acquireRequestPermit();
+    }
+
+    void releaseRequestPermit()
+    {
+        connector.releaseRequestPermit();
+    }
+
     public static CompletableFuture<ResultSet> loggedBatchExecAsync(SimpleCqlMapper ... stmts)
     {
         // TODO: implement batch for rotating table, restricting only to insert/update/delete

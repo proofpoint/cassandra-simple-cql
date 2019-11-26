@@ -49,6 +49,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
@@ -73,6 +74,7 @@ public class CassandraClusterConnector
     private final List<Consumer<Cluster>> clusterConfigurers = new ArrayList<>();
     private final String name;
     private volatile long clockSkew;
+    private Semaphore permits;
     private static final Map<String, TruncationInfo> truncateMap = new ConcurrentHashMap<>();
 
     private class TruncationInfo implements Runnable
@@ -212,6 +214,7 @@ public class CassandraClusterConnector
         for (Consumer<Cluster> configurer : clusterConfigurers) {
             configurer.accept(cluster);
         }
+        initPermits(cluster);
         session.complete(s);
         preparers.forEach(dao -> dao.accept(this));
     }
@@ -348,6 +351,9 @@ public class CassandraClusterConnector
                 configurer.accept(cluster);
             }
             final Session s = cluster.connect();
+
+            initPermits(cluster);
+
             session.complete(s);
             sessionMap.put(name, s);
 
@@ -364,6 +370,28 @@ public class CassandraClusterConnector
             throw new RuntimeException("Unrecoverable connect exception", e);
         }
         return session.isDone();
+    }
+
+    // need to provide backpressure to avoid BusyPoolException.
+    // see also https://gist.github.com/burmanm/230c306f88c69c62dfe737994444fc01
+    // see also https://stackoverflow.com/questions/47900973/com-datastax-driver-core-exceptions-busypoolexception
+    void initPermits(Cluster cluster)
+    {
+        // TODO: assuming coordinator always goes to LOCAL hosts. By default, local hosts have max requests limit of 1024, and remote 256.
+        int maxOutstandingRequests = cluster.getConfiguration().getPoolingOptions().getMaxRequestsPerConnection(HostDistance.LOCAL) + cluster.getConfiguration().getPoolingOptions().getMaxQueueSize()/3;
+        logger.info("Cassandra max outstanding requests: %d", maxOutstandingRequests);
+
+        permits = new Semaphore(maxOutstandingRequests);
+    }
+
+    public final void acquireRequestPermit()
+    {
+        permits.acquireUninterruptibly();
+    }
+
+    public final void releaseRequestPermit()
+    {
+        permits.release();
     }
 
     /**
