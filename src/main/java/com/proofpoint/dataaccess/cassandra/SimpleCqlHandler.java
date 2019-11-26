@@ -358,17 +358,38 @@ final class SimpleCqlHandler<T extends SimpleCqlMapper> implements InvocationHan
 
     private CompletableFuture<ResultSet> getFuture(ResultSetFuture future)
     {
-        return new CompletableFuture<>().supplyAsync(() ->
-        {
-            try {
-                return future.getUninterruptibly();
+        boolean queryIsInFlight = false;
+        try {
+            // limit number of in-flight requests, to avoid BusyPoolException. Cassandra driver will allow up to PoolingOptions().getMaxRequestsPerConnection() which is 1024
+            // before starting queuing them locally, where queue size is getPoolingOptions().getMaxQueueSize() or 256 by default.
+            mapper.acquireRequestPermit();
+
+            // NOTE: using supplyAsync with executor vs. the simple Futures.addCallback(lf, new FutureCallback<T>() {...} here because
+            // the DAO user code will call thenApply(mapper::mapOneOptionally) on the result set, on the supplying thread (which is the cassandra driver thread) which may block.
+            // We don't want to perform mapping on the datastax thread, hence the executor. Perhaps this can be done mre optimal by only spawning a thread
+            // when dataset is exhausted, and not spawning when expecting at most one result in the first place.
+
+            CompletableFuture<ResultSet> completableFuture = CompletableFuture
+                    .supplyAsync(()->  {
+                        try {
+                            return future.getUninterruptibly();
+                        }
+                        catch (QueryValidationException x) {
+                            throw new RuntimeException(mapper.getMapperName() + " query validation: "+x.getMessage(), x);
+                        }
+                        catch (Exception x) {
+                            throw new RuntimeException(mapper.getMapperName() + " execution failure: "+x.getMessage(), x);
+                        }
+                    }, SimpleCqlHandler.executor)
+                    .whenComplete((rs, x) -> mapper.releaseRequestPermit() );
+
+            queryIsInFlight = true;
+            return completableFuture;
+        }
+        finally {
+            if (!queryIsInFlight) {
+                mapper.releaseRequestPermit();
             }
-            catch (QueryValidationException x) {
-                throw new RuntimeException(mapper.getMapperName() + " query validation: "+x.getMessage(), x);
-            }
-            catch (Exception x) {
-                throw new RuntimeException(mapper.getMapperName() + " execution failure: "+x.getMessage(), x);
-            }
-        }, SimpleCqlHandler.executor);
+        }
     }
 }
