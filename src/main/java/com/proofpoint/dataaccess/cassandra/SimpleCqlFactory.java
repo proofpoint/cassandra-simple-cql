@@ -14,6 +14,7 @@ import com.google.common.collect.ImmutableMap.Builder;
 import javax.annotation.Nullable;
 import javax.persistence.Column;
 import java.lang.annotation.Annotation;
+import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodHandles.Lookup;
 import java.lang.reflect.Constructor;
@@ -41,6 +42,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static java.lang.invoke.MethodType.methodType;
 
 /**
  * Why this API?
@@ -211,14 +214,22 @@ public final class SimpleCqlFactory<T extends SimpleCqlMapper> implements Simple
     {
         InvocationHandler handler = (proxy, method, args) -> {
             if (method.isDefault()) {
-                final Class<?> declaringClass = method.getDeclaringClass();
-                Constructor<Lookup> constructor = MethodHandles.Lookup.class.getDeclaredConstructor(Class.class, int.class);
-                constructor.setAccessible(true);
-                return
-                        constructor.newInstance(declaringClass, MethodHandles.Lookup.PRIVATE)
-                                .unreflectSpecial(method, declaringClass)
-                                .bindTo(proxy)
-                                .invokeWithArguments(args);
+                try {
+                    // works in Java 9+
+                    MethodHandle mh = MethodHandles.publicLookup().findSpecial(cl, method.getName(), methodType(Class.class), cl);
+                    return mh.invoke(proxy);
+                }
+                catch (IllegalAccessException x) {
+                    // works in Java 8
+                    final Class<?> declaringClass = method.getDeclaringClass();
+                    Constructor<Lookup> constructor = MethodHandles.Lookup.class.getDeclaredConstructor(Class.class, int.class);
+                    constructor.setAccessible(true);
+                    return
+                            constructor.newInstance(declaringClass, MethodHandles.Lookup.PRIVATE)
+                                    .unreflectSpecial(method, declaringClass)
+                                    .bindTo(proxy)
+                                    .invokeWithArguments(args);
+                }
             }
             throw new RuntimeException("SimpleCqlMapper internal error, invoking " + method);
         };
@@ -649,10 +660,18 @@ public final class SimpleCqlFactory<T extends SimpleCqlMapper> implements Simple
                             }
                             if (method.isDefault()) {
                                 final Class<?> declaringClass = method.getDeclaringClass();
-                                return lookupConstructor.newInstance(declaringClass, MethodHandles.Lookup.PRIVATE)
-                                        .unreflectSpecial(method, declaringClass)
-                                        .bindTo(proxy)
-                                        .invokeWithArguments(args);
+                                try {
+                                    // works since Java 9
+                                    MethodHandle mh = MethodHandles.lookup().findSpecial(declaringClass, method.getName(), methodType(method.getReturnType()), declaringClass);
+                                    return mh.invoke(proxy);
+                                }
+                                catch (IllegalAccessException x) {
+                                    // works in Java 8
+                                    return lookupConstructor.newInstance(declaringClass, MethodHandles.Lookup.PRIVATE)
+                                            .unreflectSpecial(method, declaringClass)
+                                            .bindTo(proxy)
+                                            .invokeWithArguments(args);
+                                }
                             }
                         }
                         else {

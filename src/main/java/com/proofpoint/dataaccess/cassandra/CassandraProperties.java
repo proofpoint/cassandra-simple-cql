@@ -3,7 +3,7 @@ package com.proofpoint.dataaccess.cassandra;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.proofpoint.configuration.Config;
 import com.proofpoint.units.Duration;
-import org.apache.bval.constraints.NotEmpty;
+import javax.validation.constraints.NotEmpty;
 
 import javax.annotation.Nullable;
 import javax.validation.constraints.NotNull;
