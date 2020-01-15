@@ -7,12 +7,12 @@
     <artifactId>cassandra-simplecql</artifactId>
     <name>cassandra-simplecql</name>
     <packaging>jar</packaging>
-    <version>1.5-SNAPSHOT</version>
+    <version>1.6-SNAPSHOT</version>
 
     <parent>
         <groupId>com.proofpoint.platform</groupId>
         <artifactId>library</artifactId>
-        <version>1.82</version>
+        <version>2.22</version>
     </parent>
 
     <properties>
@@ -66,8 +66,16 @@
         </dependency>
 
         <dependency>
+            <groupId>com.github.spotbugs</groupId>
+            <artifactId>spotbugs-annotations</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- for @Nullable -->
+        <dependency>
             <groupId>com.google.code.findbugs</groupId>
-            <artifactId>annotations</artifactId>
+            <artifactId>jsr305</artifactId>
+            <optional>true</optional>
         </dependency>
 
         <dependency>
@@ -83,8 +91,8 @@
 
         <dependency>
             <groupId>com.google.auto.value</groupId>
-            <artifactId>auto-value</artifactId>
-            <scope>provided</scope>
+            <artifactId>auto-value-annotations</artifactId>
+            <optional>true</optional>
         </dependency>
 
         <!-- for testing -->

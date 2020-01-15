@@ -153,11 +153,24 @@ public class CassandraClusterConnector
         this.name = (name == null) ? config.getName() : name;
     }
 
+    /**
+     * this constructor is used when instantiating CassandraClusterConnector using already connected session object
+     * @param name
+     * @param session
+     */
     public CassandraClusterConnector(String name, Session session)
     {
+        logger.info("Initializing Cassandra cluster '%s' with externally provisioned session", name);
+
+        initPermits(session.getCluster());
+        SelectCassandraTimestamp.Factory.prepare(this);
+
+        // note, other preparers will be invoked at the time of addConnectListener
+
         this.session.complete(requireNonNull(session, "session is null"));
         this.name = name;
         this.config = new CassandraProperties();
+        logger.info("Cassandra cluster '%s' initialization complete.", name);
     }
 
     public static String getNameFromCallerAnnotation()
