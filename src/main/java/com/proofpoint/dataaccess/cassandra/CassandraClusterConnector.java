@@ -163,13 +163,13 @@ public class CassandraClusterConnector
         logger.info("Initializing Cassandra cluster '%s' with externally provisioned session", name);
 
         initPermits(session.getCluster());
-        SelectCassandraTimestamp.Factory.prepare(this);
 
         // note, other preparers will be invoked at the time of addConnectListener
-
         this.session.complete(requireNonNull(session, "session is null"));
         this.name = name;
         this.config = new CassandraProperties();
+        SelectCassandraTimestamp.Factory.prepare(this);
+
         logger.info("Cassandra cluster '%s' initialization complete.", name);
     }
 
