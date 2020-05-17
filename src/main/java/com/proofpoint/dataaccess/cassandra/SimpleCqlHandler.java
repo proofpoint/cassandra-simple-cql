@@ -11,29 +11,23 @@ import com.proofpoint.concurrent.Threads;
 import com.proofpoint.dataaccess.cassandra.SimpleCqlFactory.ConfiguredExecution;
 import com.proofpoint.log.Logger;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodHandles.Lookup;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static com.proofpoint.dataaccess.cassandra.SimpleCqlFactory.invokeDefaultMethod;
 
 final class SimpleCqlHandler<T extends SimpleCqlMapper> implements InvocationHandler
 {
@@ -130,11 +124,7 @@ final class SimpleCqlHandler<T extends SimpleCqlMapper> implements InvocationHan
             }
         }
         if (m.isDefault()) {
-            final Class<?> declaringClass = m.getDeclaringClass();
-            return SimpleCqlFactory.lookupConstructor.newInstance(declaringClass, MethodHandles.Lookup.PRIVATE)
-                    .unreflectSpecial(m, declaringClass)
-                    .bindTo(proxy)
-                    .invokeWithArguments(args);
+            return invokeDefaultMethod(proxy, m, args);
         }
         throw new RuntimeException(String.format("SimpleCqlMapper %s cannot invoke method %s(with %d args)", mapper.getMapperName(), m.toString(), (args == null)? 0 : args.length));
     }

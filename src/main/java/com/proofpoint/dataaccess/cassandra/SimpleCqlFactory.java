@@ -23,7 +23,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -210,26 +209,38 @@ public final class SimpleCqlFactory<T extends SimpleCqlMapper> implements Simple
         }
     }
 
+    static Object invokeDefaultMethod(Object proxy, Method method, Object[] args)
+            throws Throwable
+    {
+        final Class<?> declaringClass = method.getDeclaringClass();
+        try {
+            // works in Java 9, 10, 11
+            MethodHandle mh = MethodHandles
+                    .privateLookupIn(declaringClass, MethodHandles.lookup())
+                    .findSpecial(
+                        declaringClass,
+                        method.getName(),
+                        methodType(method.getReturnType(), method.getParameterTypes()),
+                        declaringClass);
+            return mh.bindTo(proxy).invokeWithArguments(args);
+        }
+        catch (IllegalAccessException x) {
+            // works in Java 8
+            Constructor<Lookup> constructor = MethodHandles.Lookup.class.getDeclaredConstructor(Class.class, int.class);
+            constructor.setAccessible(true);
+            return
+                    constructor.newInstance(declaringClass, MethodHandles.Lookup.PRIVATE)
+                            .unreflectSpecial(method, declaringClass)
+                            .bindTo(proxy)
+                            .invokeWithArguments(args);
+        }
+    }
+
     private static Class<?> getCqlMapperParameterClass(Class<? extends SimpleCqlMapper> cl)
     {
         InvocationHandler handler = (proxy, method, args) -> {
             if (method.isDefault()) {
-                try {
-                    // works in Java 9+
-                    MethodHandle mh = MethodHandles.publicLookup().findSpecial(cl, method.getName(), methodType(Class.class), cl);
-                    return mh.invoke(proxy);
-                }
-                catch (IllegalAccessException x) {
-                    // works in Java 8
-                    final Class<?> declaringClass = method.getDeclaringClass();
-                    Constructor<Lookup> constructor = MethodHandles.Lookup.class.getDeclaredConstructor(Class.class, int.class);
-                    constructor.setAccessible(true);
-                    return
-                            constructor.newInstance(declaringClass, MethodHandles.Lookup.PRIVATE)
-                                    .unreflectSpecial(method, declaringClass)
-                                    .bindTo(proxy)
-                                    .invokeWithArguments(args);
-                }
+                return invokeDefaultMethod(proxy, method, args);
             }
             throw new RuntimeException("SimpleCqlMapper internal error, invoking " + method);
         };

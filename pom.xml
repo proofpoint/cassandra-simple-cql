@@ -7,7 +7,7 @@
     <artifactId>cassandra-simplecql</artifactId>
     <name>cassandra-simplecql</name>
     <packaging>jar</packaging>
-    <version>1.8-SNAPSHOT</version>
+    <version>1.9-SNAPSHOT</version>
 
     <parent>
         <groupId>com.proofpoint.platform</groupId>
@@ -16,6 +16,11 @@
     </parent>
 
     <properties>
+        <java.version>11</java.version>
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
+        <project.build.targetJdk>${java.version}</project.build.targetJdk>
+
         <cassandra-driver.version>3.3.0</cassandra-driver.version>
         <scassandra.version>1.0.3</scassandra.version>
     </properties>
