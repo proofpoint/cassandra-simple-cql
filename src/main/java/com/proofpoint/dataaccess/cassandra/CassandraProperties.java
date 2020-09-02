@@ -25,6 +25,7 @@ public class CassandraProperties
     private Duration connectRetryPeriod = Duration.succinctDuration(1, TimeUnit.MINUTES);
     private String truststoreKey;
     private String truststorePath;
+    private boolean throttleRequests = true;
     private int maxRequestsPerConnectionLocal = 10000;
     private int maxRequestsPerConnectionRemote = 1000;
 
@@ -129,6 +130,16 @@ public class CassandraProperties
         this.maxRequestsPerConnectionRemote = maxRequestsPerConnectionRemote;
     }
 
+    public boolean getThrottleRequests()
+    {
+        return throttleRequests;
+    }
+
+    @Config("cassandra-throttle-requests")
+    public void setThrottleRequests(boolean b)
+    {
+        this.throttleRequests = b;
+    }
 
     public CassandraProperties()
     {

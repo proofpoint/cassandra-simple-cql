@@ -73,6 +73,7 @@ public class CassandraClusterConnector
     private final List<Consumer<CassandraClusterConnector>> preparers = new ArrayList<>();
     private final List<Consumer<Cluster>> clusterConfigurers = new ArrayList<>();
     private final String name;
+    private final boolean throttleRequests;
     private volatile long clockSkew;
     private Semaphore permits;
     private static final Map<String, TruncationInfo> truncateMap = new ConcurrentHashMap<>();
@@ -151,6 +152,12 @@ public class CassandraClusterConnector
         this.config = config;
         String name = getNameFromCallerAnnotation();
         this.name = (name == null) ? config.getName() : name;
+        this.throttleRequests = config.getThrottleRequests();
+    }
+
+    public CassandraClusterConnector(String name, Session session)
+    {
+        this(name, session, new CassandraProperties());
     }
 
     /**
@@ -158,16 +165,18 @@ public class CassandraClusterConnector
      * @param name
      * @param session
      */
-    public CassandraClusterConnector(String name, Session session)
+    public CassandraClusterConnector(String name, Session session, CassandraProperties config)
     {
         logger.info("Initializing Cassandra cluster '%s' with externally provisioned session", name);
+        this.config = config;
+        this.throttleRequests = config.getThrottleRequests();
 
         initPermits(session.getCluster());
 
         // note, other preparers will be invoked at the time of addConnectListener
         this.session.complete(requireNonNull(session, "session is null"));
         this.name = name;
-        this.config = new CassandraProperties();
+
         SelectCassandraTimestamp.Factory.prepare(this);
 
         logger.info("Cassandra cluster '%s' initialization complete.", name);
@@ -394,17 +403,23 @@ public class CassandraClusterConnector
         int maxOutstandingRequests = cluster.getConfiguration().getPoolingOptions().getMaxRequestsPerConnection(HostDistance.LOCAL) + cluster.getConfiguration().getPoolingOptions().getMaxQueueSize()/3;
         logger.info("Cassandra max outstanding requests: %d", maxOutstandingRequests);
 
-        permits = new Semaphore(maxOutstandingRequests);
+        if (throttleRequests) {
+            permits = new Semaphore(maxOutstandingRequests);
+        }
     }
 
     public final void acquireRequestPermit()
     {
-        permits.acquireUninterruptibly();
+        if (throttleRequests) {
+            permits.acquireUninterruptibly();
+        }
     }
 
     public final void releaseRequestPermit()
     {
-        permits.release();
+        if (throttleRequests) {
+            permits.release();
+        }
     }
 
     /**
