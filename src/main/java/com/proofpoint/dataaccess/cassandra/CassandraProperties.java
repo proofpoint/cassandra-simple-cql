@@ -2,6 +2,7 @@ package com.proofpoint.dataaccess.cassandra;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.proofpoint.configuration.Config;
+import com.proofpoint.configuration.ConfigSecuritySensitive;
 import com.proofpoint.units.Duration;
 
 import javax.annotation.Nullable;
@@ -55,6 +56,7 @@ public class CassandraProperties
     }
 
     @Config("cassandra-password")
+    @ConfigSecuritySensitive
     public void setClusterPassword(String clusterPassword)
     {
         this.clusterPassword = clusterPassword;
@@ -73,6 +75,7 @@ public class CassandraProperties
     }
 
     @Config("ssl.truststore.key")
+    @ConfigSecuritySensitive
     public void setTruststoreKey(String key)
     {
         this.truststoreKey = key;

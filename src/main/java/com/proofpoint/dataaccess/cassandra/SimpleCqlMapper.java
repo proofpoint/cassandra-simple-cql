@@ -1,5 +1,6 @@
 package com.proofpoint.dataaccess.cassandra;
 
+import com.datastax.driver.core.BoundStatement;
 import com.datastax.driver.core.ResultSet;
 import com.google.common.reflect.TypeToken;
 
@@ -68,4 +69,6 @@ public interface SimpleCqlMapper<T>
         {
         }.getRawType();
     }
+
+    BoundStatement bind();
 }
