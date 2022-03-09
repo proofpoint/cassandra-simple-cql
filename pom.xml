@@ -142,18 +142,18 @@
     <tag>1.1</tag>
   </scm>
 
-  <distributionManagement>
-        <repository>
-            <id>proofpoint</id>
-            <name>Proofpoint Releases</name>
-            <url>https://maven.us.proofpoint.com/nexus/content/repositories/yum-centos-generic-release</url>
-        </repository>
+    <distributionManagement>
         <snapshotRepository>
-            <id>proofpoint-snapshots</id>
-            <name>Proofpoint Snapshots</name>
-            <url>https://maven.us.proofpoint.com/nexus/content/repositories/yum-centos-generic-snapshot</url>
+            <id>snapshots</id>
+            <name>Non_Prod_Artifactory-snapshots</name>
+            <url>https://repocache.nonprod.ppops.net/artifactory/dev-maven-snapshot-local</url>
         </snapshotRepository>
-  </distributionManagement>
+        <repository>
+            <id>central</id>
+            <name>Non_Prod_Artifactory-releases</name>
+            <url>https://repocache.nonprod.ppops.net/artifactory/dev-maven-release-local</url>
+        </repository>
+    </distributionManagement>
 
 </project>
 
